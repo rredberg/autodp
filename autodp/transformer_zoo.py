@@ -4,8 +4,10 @@
 from autodp.autodp_core import Mechanism, Transformer
 import math
 import numpy as np
+from scipy.optimize import minimize_scalar
 
-from autodp import mechanism_zoo, rdp_acct
+
+from autodp import mechanism_zoo, rdp_acct, rdp_bank
 
 
 # The generic composition class
@@ -196,6 +198,29 @@ class AmplificationBySampling(Transformer):
         newmech.params.update(new_params)
 
         return newmech
+
+class PrivateSelection(Transformer):
+    """ Given a base mechanism, transforms it into a mechanism that implements
+        private selection as described in Papernot & Steinke's
+        'Hyperparameter Tuning with Renyi Differential Privacy'.
+    """
+    def __init__(self):
+        Transformer.__init__(self)
+        self.transform = self.repeat
+        
+        
+    def repeat(self, base_mech, eta, gamma, alpha_hat_max=10e6):
+        assert(eta > -1 and 0 < gamma < 1)
+        log_exp_K = (1/gamma - 1)/(math.log(1/gamma))
+        func = lambda alpha_hat: (1 + eta) * (1 - 1/alpha_hat) * base_mech.get_RDP(alpha_hat) + (1 + eta) * math.log(1/gamma) / alpha_hat
+        results = minimize_scalar(func, method='bounded', bounds = [1, alpha_hat_max])
+        eps_prime = lambda alpha: base_mech.get_RDP(alpha) + results.fun + log_exp_K / (alpha - 1)
+        params =  {'eps_prime': eps_prime, 'sigma': base_mech.params['sigma']}
+        new_mech = Mechanism()
+        new_mech.params = params
+        new_rdp = lambda x: rdp_bank.RDP_selection(params, x)
+        new_mech.propagate_updates(new_rdp, 'RDP')
+        return new_mech
 
 
 

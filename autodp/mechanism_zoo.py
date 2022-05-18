@@ -80,7 +80,7 @@ class ExactGaussianMechanism(Mechanism):
 class LaplaceMechanism(Mechanism):
     """
     param params:
-    'b' --- is the is the ratio of the scale parameter and L1 sensitivity
+    'b' --- is the ratio of the scale parameter and L1 sensitivity
     """
     def __init__(self, b=None, name='Laplace'):
 
@@ -92,7 +92,49 @@ class LaplaceMechanism(Mechanism):
         if b is not None:
             new_rdp = lambda x: rdp_bank.RDP_laplace({'b': b}, x)
             self.propagate_updates(new_rdp, 'RDP')
+            
+class ObjectivePerturbationMechanism(Mechanism):
+    """
+    param params:
+        'sigma' --- is the noise level (linear perturbation of objective function)
+        'lambd' --- is the regularization level (L2-norm squared)
+        'L' -- is the smoothness constant (upper bound on the L2-norm of the gradient of the loss function)
+        'beta' -- is the Lipschitz-smoothness constant (upper bound on max eigenvalue of the Hessian of the loss function)
+        'd' -- is the dimension of the data
+        'glm' -- is a Boolean indicating a generalized linear model
+    """
+    def __init__(self,params,name='ObjectivePerturbation'):
+        
+        Mechanism.__init__(self)
+        
+        self.name=name
+        self.params={'sigma':params['sigma'],'lambd':params['lambd'], 'L':params['L'], 'beta':params['beta']}
 
+        new_rdp = lambda x: rdp_bank.RDP_objpert(self.params, x)
+        self.propagate_updates(new_rdp, type_of_update='RDP')
+
+class ComposedGaussianMechanismSubsampling(Mechanism):
+    """
+    Composition of Gaussian mechanism with Poisson subsampling, useful for DP-SGD.
+    params:
+        sigma -- noise level
+        prob -- sampling probability (= batch_size / len(dataset))
+        coeffs -- [num_iters], where num_iters is the number of iterations.
+    """
+    def __init__(self, params, name='SubsampleGaussian'):
+        Mechanism.__init__(self)
+        self.name = name
+        sigma, prob, coeffs = params['sigma'], params['prob'], params['coeffs']
+        self.params = {'sigma': params['sigma'],
+                       'coeffs': params['coeffs'],
+                       'prob': prob
+                       }
+        mech = ExactGaussianMechanism(sigma=params['sigma'])
+        compose = transformer_zoo.Composition()
+        poisson_sample = transformer_zoo.AmplificationBySampling(PoissonSampling=True)
+        mech = compose([poisson_sample.amplify(mech, prob, improved_bound_flag=True)], coeffs)
+        rdp_total = mech.RenyiDP
+        self.propagate_updates(rdp_total, type_of_update='RDP')
 
 class RandresponseMechanism(Mechanism):
 

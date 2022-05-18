@@ -11,6 +11,9 @@ the per-instance RDP associated with two given data sets.
 
 import numpy as np
 import math
+from scipy.stats import chi
+from scipy.stats import foldnorm, halfnorm
+from scipy.stats import norm
 from autodp import utils
 
 
@@ -34,6 +37,14 @@ def stable_log_diff_exp(x):
 
     return mag
 
+def stable_mgf_foldnorm(alpha, mu, sigma):
+    """A numerically stable implementation of the log moment-generating function of the folded normal distribution.
+    alpha -- moment is of order alpha
+    mu -- mean of the original normal distribution
+    sigma -- variance of the original normal distribution."""
+    return (sigma ** 2) * (alpha ** 2)/2 + mu * alpha + math.log(norm.cdf(mu/sigma + sigma * alpha) + np.exp(-2 * mu * alpha) * norm.cdf(-mu/sigma + sigma * alpha))
+    #return (sigma **2) * (alpha ** 2)/2 + math.log(2 * norm.cdf(sigma * alpha))
+
 
 def RDP_gaussian(params, alpha):
     """
@@ -51,7 +62,7 @@ def RDP_gaussian(params, alpha):
 def RDP_laplace(params, alpha):
     """
     :param params:
-        'b' --- is the is the ratio of the scale parameter and L1 sensitivity
+        'b' --- is the ratio of the scale parameter and L1 sensitivity
     :param alpha: The order of the Renyi Divergence
     :return: Evaluation of the RDP's epsilon
     """
@@ -67,7 +78,42 @@ def RDP_laplace(params, alpha):
     else:  # alpha > 1
         return utils.stable_logsumexp_two((alpha-1.0) / b + np.log(alpha / (2.0 * alpha - 1)),
                                            -1.0*alpha / b + np.log((alpha-1.0) / (2.0 * alpha - 1)))/(alpha-1)
+    
+def RDP_objpert(params, alpha):
+    """
+    :param params:
+        'sigma' --- is the noise level (linear perturbation of objective function)
+        'lambd' --- is the regularization level (L2-norm squared)
+        'L' -- is the smoothness constant (upper bound on the L2-norm of the gradient of the loss function)
+        'beta' -- is the Lipschitz-smoothness constant (upper bound on max eigenvalue of the Hessian of the loss function)
+        'd' -- is the dimension of the data
+        'glm' -- is a boolean indicating whether or not the model is a generalized linear model
+    :param alpha: The order of the Renyi Divergence
+    :return: Evaluation of the RDP's epsilon
+    """
+    sigma = params['sigma']
+    lambd = params['lambd']
+    L = params['L']
+    beta = params['beta']
+    if alpha > 1:
+        return abs(-math.log(1 - beta/lambd)) + (L ** 2)/(2 * sigma ** 2) +  1/(alpha - 1) *  stable_mgf_foldnorm(alpha - 1, 0, L/sigma)
+    elif alpha == 1:
+        return abs(-math.log(1 - beta/lambd)) + (L ** 2)/(2 * sigma ** 2) + stable_mgf_foldnorm(1, 0, L/sigma)
+    else:
+        return 0
 
+
+def RDP_selection(params, alpha):
+    """
+    Implements Theorem 2 of Papernot & Steinke's 'Hyperparameter Tuning with Renyi Differential Privacy' (2022).
+    Params are
+        eps_prime -- function to compute RDP(alpha) from Theorem 2 with pre-computed values of optimal (epsilon_hat, alpha_hat).
+        
+    """
+    eps_prime = params['eps_prime']
+    if alpha <= 1:
+        alpha = 1.000000000000001
+    return eps_prime(alpha)
 
 def RDP_independent_noisy_screen(params, alpha):
 
